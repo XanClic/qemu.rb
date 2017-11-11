@@ -30,8 +30,13 @@ class VM
 
         @qmp_socket = UNIXServer.new('/tmp/qemu.rb-qmp-' + @this_vm.to_s)
 
+        @stdout, c_stdout = IO.pipe()
+        @stderr, c_stderr = IO.pipe()
+
         @child = Process.fork()
         if !@child
+            STDOUT.reopen(c_stdout)
+            STDERR.reopen(c_stderr)
             Process.exec(*command_line, '-qmp', 'unix:/tmp/qemu.rb-qmp-' + @this_vm.to_s,
                                         '-accel', 'qtest', '-display', 'none')
         end
@@ -44,8 +49,18 @@ class VM
         @qmp
     end
 
-    def kill(signal='KILL')
-        Process.kill(signal, @child) if @child
+    def stdout
+        @stdout
+    end
+
+    def stderr
+        @stderr
+    end
+
+    def cleanup()
+        @stdout.close
+        @stderr.close
+
         @child = nil
         begin
             File.delete('/tmp/qemu.rb-qmp-' + @this_vm.to_s)
@@ -53,12 +68,13 @@ class VM
         end
     end
 
+    def kill(signal='KILL')
+        Process.kill(signal, @child) if @child
+        self.cleanup()
+    end
+
     def wait()
         Process.wait(@child) if @child
-        @child = nil
-        begin
-            File.delete('/tmp/qemu.rb-qmp-' + @this_vm.to_s)
-        rescue
-        end
+        self.cleanup()
     end
 end
