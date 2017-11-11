@@ -18,7 +18,7 @@
 
 
 require 'socket'
-require (File.dirname(__FILE__) + '/qmp.rb')
+require (File.realpath(File.dirname(__FILE__)) + '/qmp.rb')
 
 
 class VM
