@@ -5,6 +5,10 @@ require 'shellwords'
 require (File.realpath(File.dirname(__FILE__)) + '/../qemu.rb')
 
 
+QEMU = 'qemu-system-x86_64'
+PARALLEL_JOBS = 16
+
+
 def help
     $stderr.puts("Usage: #{__FILE__} <XVA file> <disk directory> " +
                  "<output qcow2> [--write-zeroes]")
@@ -119,7 +123,7 @@ end
 
 begin
 
-vm = VM.new('qemu-system-x86_64')
+vm = VM.new(QEMU)
 
 puts 'Adding block devices...'
 
@@ -196,20 +200,20 @@ if null_start
     copy_index += 1
 end
 
-puts 'Starting block jobs...'
-
 jobs_running = {}
-copy_index.times do |i|
-    jobs_running[i] = true
-    vm.qmp.blockdev_backup({ job_id: "job-#{i}",
-                             device: "input-#{i}",
-                             target: "output-#{i}",
-                             sync: 'full' })
-end
-
 jobs_completed = 0
+job_i = 0
 
-while !jobs_running.empty?
+while jobs_completed < copy_index
+    while jobs_running.size < PARALLEL_JOBS && job_i < copy_index
+        jobs_running[job_i] = true
+        vm.qmp.blockdev_backup({ job_id: "job-#{job_i}",
+                                 device: "input-#{job_i}",
+                                 target: "output-#{job_i}",
+                                 sync: 'full' })
+        job_i += 1
+    end
+
     event = vm.qmp.event_wait('BLOCK_JOB_COMPLETED')
     jobs_running.delete(event['data']['device'][4..-1].to_i)
 
