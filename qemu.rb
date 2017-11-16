@@ -38,7 +38,8 @@ class VM
             STDOUT.reopen(c_stdout)
             STDERR.reopen(c_stderr)
             Process.exec(*command_line, '-qmp', 'unix:/tmp/qemu.rb-qmp-' + @this_vm.to_s,
-                                        '-accel', 'qtest', '-display', 'none')
+                                        '-M', 'none,accel=qtest:tcg', '-display', 'none')
+            exit 1
         end
 
         @qmp_con = @qmp_socket.accept()
