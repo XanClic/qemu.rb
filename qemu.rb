@@ -42,11 +42,15 @@ class VM
             exit 1
         end
 
-        @qmp_con = @qmp_socket.accept()
-        @qmp = QMP.new(@qmp_con)
+        @qmp = nil
     end
 
     def qmp
+        if !@qmp
+            @qmp_con = @qmp_socket.accept()
+            @qmp = QMP.new(@qmp_con)
+        end
+
         @qmp
     end
 
