@@ -6,7 +6,7 @@ begin
     vm = VM.new('qemu-system-x86_64')
 
     vm.qmp.unknown_command()
-    vm.quit()
+    vm.qmp.quit()
     vm.wait()
 rescue QMPError => e
     vm.kill(9)
