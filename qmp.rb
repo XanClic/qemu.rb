@@ -48,8 +48,18 @@ class QMP
             raise 'Capability object does not contain "QMP" key'
         end
 
-        if !caps['QMP']['capabilities'] || !caps['QMP']['capabilities'].empty?
-            raise 'Capability list is not empty'
+        if !caps['QMP']['capabilities']
+            raise 'No capability list'
+        end
+
+        caps['QMP']['capabilities'].each do |cap|
+            case cap
+            when 'oob'
+                # Ignore
+
+            else
+                raise "Unknown capability \"#{cap}\""
+            end
         end
 
         self.exec('qmp_capabilities')
