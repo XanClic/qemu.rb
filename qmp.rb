@@ -120,11 +120,11 @@ class QMP
         end
     end
 
-    def event_wait(name, wait=true)
+    def event_wait(name=nil, wait=true)
         if !@events.empty?
             p @events
         end
-        event = @events.find { |ev| ev['event'] == name }
+        event = @events.find { |ev| !name || ev['event'] == name }
         if event
             @events.delete(event)
             return event
@@ -144,7 +144,7 @@ class QMP
             if !ret['event']
                 raise ('Event expected, got ' + ret.inspect)
             end
-            if ret['event'] == name
+            if !name || ret['event'] == name
                 return ret
             end
             @events << ret
