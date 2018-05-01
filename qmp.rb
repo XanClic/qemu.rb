@@ -75,6 +75,29 @@ class QMP
         JSON.parse(raw)
     end
 
+    def recv_nonblock()
+        raw = ''
+        while true
+            begin
+                res = @con.read_nonblock(1)
+            rescue
+                break
+            end
+            if res.empty?
+                break
+            end
+            raw += res
+            if res == "\n"
+                break
+            end
+        end
+        if raw.empty?
+            return nil
+        end
+        puts(raw) if @verbose
+        JSON.parse(raw)
+    end
+
     def exec(cmd, args={})
         if args == {}
             self.send({ execute: cmd })
@@ -97,7 +120,10 @@ class QMP
         end
     end
 
-    def event_wait(name)
+    def event_wait(name, wait=true)
+        if !@events.empty?
+            p @events
+        end
         event = @events.find { |ev| ev['event'] == name }
         if event
             @events.delete(event)
@@ -105,8 +131,16 @@ class QMP
         end
 
         ret = {}
-        while true
-            ret = self.recv()
+        first = true
+        while first || wait
+            if !wait
+                ret = self.recv_nonblock()
+                if !ret
+                    break
+                end
+            else
+                ret = self.recv()
+            end
             if !ret['event']
                 raise ('Event expected, got ' + ret.inspect)
             end
@@ -114,7 +148,10 @@ class QMP
                 return ret
             end
             @events << ret
+            first = false
         end
+
+        return nil
     end
 
     def replace_underscores(val)
