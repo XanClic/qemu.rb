@@ -131,9 +131,6 @@ class QMP
     end
 
     def event_wait(name=nil, wait=true)
-        if !@events.empty?
-            p @events
-        end
         event = @events.find { |ev| !name || ev['event'] == name }
         if event
             @events.delete(event)
