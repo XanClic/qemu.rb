@@ -182,4 +182,70 @@ class QMP
             self.exec(method, self.replace_underscores(args[0]))
         end
     end
+
+    # Helper function for run_job(); but may also be used by generic
+    # event loops to replace run_job().
+    #
+    # (run_job() blocks until the job is dismissed.  If you want to
+    #  use the generic job management it offers but still want to
+    #  process other events concurrently, you may write your own event
+    #  loop like so:
+    #
+    #    while [...]
+    #        e = vm.qmp.event_wait
+    #        vm.qmp.process_job_event(id, e, ...)
+    #        [...your actions...]
+    #    end
+    # )
+    #
+    # @id: Block job ID
+    # @event: Generic event
+    # @auto_finalize: Whether the job was set to auto-finalize
+    # @auto_dismiss: Whether the job was set to auto-dismiss
+    #
+    # Returns:
+    # - nil when the event was not recognized as belonging to this
+    #   job,
+    # - false when the event belongs to this job, but the job
+    #   continues to run,
+    # - true when the job has been destroyed.
+    #
+    # Raises:
+    # - A QMPError when the job has been aborted
+    def process_job_event(id, event, auto_finalize=true, auto_dismiss=false)
+        return false if event['event'] != 'JOB_STATUS_CHANGE'
+
+        data = event['data']
+        return false if data['id'] != id
+
+        case data['status']
+        when 'pending'
+            self.job_finalize({ id: id }) unless auto_finalize
+
+        when 'aborting'
+            reason = self.query_jobs.find { |j| j['id'] == id }['error']
+            raise QMPError.new({ 'error': reason })
+
+        when 'concluded'
+            self.job_dismiss({ id: id }) unless auto_dismiss
+
+        when 'null'
+            return true
+        end
+
+        return false
+    end
+
+    # Runs process_job_event() in a loop and blocks until the job has
+    # been completed.  Raises a QMPError if the job has been aborted.
+    #
+    # @id: Block job ID
+    # @auto_finalize: Whether the job was set to auto-finalize
+    # @auto_dismiss: Whether the job was set to auto-dismiss
+    def run_job(id, auto_finalize=true, auto_dismiss=false)
+        while true
+            e = self.event_wait
+            break if self.process_job_event(id, e, auto_finalize, auto_dismiss)
+        end
+    end
 end
