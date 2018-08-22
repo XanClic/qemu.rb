@@ -35,6 +35,7 @@ end
 
 UNDERSCORE_METHODS = [
     :block_resize,
+    :device_add,
 ]
 
 class QMP
