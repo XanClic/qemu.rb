@@ -24,14 +24,9 @@ require (File.realpath(File.dirname(__FILE__)) + '/qmp.rb')
 class VM
     $vm_counter = 0
 
-    def initialize(*command_line)
+    def initialize(*command_line, qtest: true)
         @this_vm = $vm_counter
         $vm_counter += 1
-
-        args = command_line.select { |cla| cla.kind_of?(Symbol) }
-        command_line.reject! { |cla| cla.kind_of?(Symbol) }
-
-        qtest = !args.include?(:noqtest)
 
         @qmp_socket_fname = '/tmp/qemu.rb-qmp-' + @this_vm.to_s
         @qtest_socket_fname = '/tmp/qemu.rb-qtest-' + @this_vm.to_s if qtest
