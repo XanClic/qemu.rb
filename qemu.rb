@@ -101,9 +101,11 @@ class VM
         end
     end
 
-    def kill(signal='KILL')
+    # If wait is not set, the caller has to call it (or .cleanup)
+    # manually.
+    def kill(signal='KILL', wait=true)
         Process.kill(signal, @child) if @child
-        self.cleanup()
+        self.wait() if wait
     end
 
     def wait()
