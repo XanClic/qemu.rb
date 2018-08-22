@@ -24,7 +24,8 @@ require (File.realpath(File.dirname(__FILE__)) + '/qmp.rb')
 class VM
     $vm_counter = 0
 
-    def initialize(*command_line, qtest: true)
+    def initialize(*command_line, qtest: true, keep_stdout: false,
+                   keep_stderr: false)
         @this_vm = $vm_counter
         $vm_counter += 1
 
@@ -34,13 +35,13 @@ class VM
         @qmp_socket = UNIXServer.new(@qmp_socket_fname)
         @qtest_socket = UNIXServer.new(@qtest_socket_fname) if qtest
 
-        @stdout, c_stdout = IO.pipe()
-        @stderr, c_stderr = IO.pipe()
+        @stdout, c_stdout = keep_stdout ? nil : IO.pipe()
+        @stderr, c_stderr = keep_stderr ? nil : IO.pipe()
 
         @child = Process.fork()
         if !@child
-            STDOUT.reopen(c_stdout)
-            STDERR.reopen(c_stderr)
+            STDOUT.reopen(c_stdout) unless keep_stdout
+            STDERR.reopen(c_stderr) unless keep_stderr
             if qtest
                 Process.exec(*command_line, '-qmp', 'unix:' + @qmp_socket_fname,
                                             '-M', 'q35,accel=qtest:tcg', '-display', 'none',
@@ -85,8 +86,8 @@ class VM
     end
 
     def cleanup()
-        @stdout.close
-        @stderr.close
+        @stdout.close if @stdout
+        @stderr.close if @stderr
 
         @child = nil
         begin
