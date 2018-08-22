@@ -17,8 +17,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+require 'shellwords'
 require 'socket'
 require (File.realpath(File.dirname(__FILE__)) + '/qmp.rb')
+
+
+$qemu_input = ''
 
 
 class VM
@@ -107,5 +111,22 @@ class VM
     def wait()
         Process.wait(@child) if @child
         self.cleanup()
+    end
+end
+
+
+def qsystem(cmdline)
+    $qemu_input += '$ ' + cmdline + $/
+    system(cmdline)
+end
+
+
+def print_input
+    at_exit do
+        puts
+        puts '--- INPUT SAMPLE ---'
+        puts $qemu_input
+        puts '--- END SAMPLE ---'
+        puts
     end
 end

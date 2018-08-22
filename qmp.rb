@@ -76,6 +76,7 @@ class QMP
     def send(object)
         raw = object.to_json()
         puts(raw) if @verbose
+        $qemu_input += raw + $/
         @con.send(raw, 0)
     end
 
