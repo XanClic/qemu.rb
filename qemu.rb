@@ -28,32 +28,49 @@ $qemu_input = ''
 class VM
     $vm_counter = 0
 
-    def initialize(*command_line, qtest: true, keep_stdout: false,
-                   keep_stderr: false)
-        @this_vm = $vm_counter
+    def initialize(*command_line, qtest: true, keep_stdin: true,
+                   keep_stdout: false, keep_stderr: false, normal_vm: false,
+                   serial: false, print_full_cmdline: false)
+        @this_vm = "#{Process.pid}-#{$vm_counter}"
         $vm_counter += 1
 
-        @qmp_socket_fname = '/tmp/qemu.rb-qmp-' + @this_vm.to_s
-        @qtest_socket_fname = '/tmp/qemu.rb-qtest-' + @this_vm.to_s if qtest
+        if normal_vm
+            qtest = false
+        end
+
+        @qmp_socket_fname = '/tmp/qemu.rb-qmp-' + @this_vm
+        @qtest_socket_fname = '/tmp/qemu.rb-qtest-' + @this_vm if qtest
+        @serial_socket_fname = '/tmp/qemu.rb-serial-' + @this_vm if serial
 
         @qmp_socket = UNIXServer.new(@qmp_socket_fname)
         @qtest_socket = UNIXServer.new(@qtest_socket_fname) if qtest
+        @serial_socket = UNIXServer.new(@serial_socket_fname) if serial
 
-        @stdout, c_stdout = keep_stdout ? nil : IO.pipe()
-        @stderr, c_stderr = keep_stderr ? nil : IO.pipe()
+        c_stdin, @stdin = keep_stdin ? [nil, nil] : IO.pipe()
+        @stdout, c_stdout = keep_stdout ? [nil, nil] : IO.pipe()
+        @stderr, c_stderr = keep_stderr ? [nil, nil] : IO.pipe()
 
         @child = Process.fork()
         if !@child
+            add_args = ['-qmp', 'unix:' + @qmp_socket_fname]
+            add_args += ['-M', 'q35,accel=qtest:tcg',
+                         '-qtest', 'unix:' + @qtest_socket_fname] if qtest
+            add_args += ['-M', 'q35,accel=tcg'] unless qtest || normal_vm
+            add_args += ['-display', 'none'] unless normal_vm
+            add_args += ['-serial', 'unix:' + @serial_socket_fname] if serial
+
+            # FIXME (something with the e1000e BIOS file)
+            add_args += ['-net', 'none'] unless normal_vm
+
+            if print_full_cmdline
+                puts('$ ' + (command_line + add_args).map { |arg| arg.shellescape } * ' ')
+            end
+
+            STDIN.reopen(c_stdin) unless keep_stdin
             STDOUT.reopen(c_stdout) unless keep_stdout
             STDERR.reopen(c_stderr) unless keep_stderr
-            if qtest
-                Process.exec(*command_line, '-qmp', 'unix:' + @qmp_socket_fname,
-                                            '-M', 'q35,accel=qtest:tcg', '-display', 'none',
-                                            '-qtest', 'unix:' + @qtest_socket_fname)
-            else
-                Process.exec(*command_line, '-qmp', 'unix:' + @qmp_socket_fname,
-                                            '-M', 'q35,accel=tcg', '-display', 'none')
-            end
+
+            Process.exec(*command_line, *add_args)
             exit 1
         end
 
@@ -81,6 +98,22 @@ class VM
         @qtest_con
     end
 
+    def serial
+        if !@serial_socket
+            return nil
+        end
+
+        if !@serial_con
+            @serial_con = @serial_socket.accept()
+        end
+
+        @serial_con
+    end
+
+    def stdin
+        @stdin
+    end
+
     def stdout
         @stdout
     end
@@ -97,6 +130,7 @@ class VM
         begin
             File.delete(@qmp_socket_fname)
             File.delete(@qtest_socket_fname) if @qtest_socket_fname
+            File.delete(@serial_socket_fname) if @serial_socket_fname
         rescue
         end
     end
