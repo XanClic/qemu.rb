@@ -42,6 +42,7 @@ class QMP
     def initialize(connection)
         @con = connection
         @events = []
+        @deferred_events = []
         @verbose = false
 
         caps = self.recv()
@@ -132,8 +133,26 @@ class QMP
         end
     end
 
-    def event_wait(name=nil, wait=true)
-        event = @events.find { |ev| !name || ev['event'] == name }
+    def cmp_hashes(ref, x)
+        return false unless x.kind_of?(Hash)
+        ref.each do |k, v|
+            if v.kind_of?(Hash)
+                return false unless self.cmp_hashes(v, x[k.to_s])
+            else
+                return false if x[k.to_s] != v
+            end
+        end
+        return true
+    end
+
+    def event_wait(ref=nil, wait=true)
+        if !ref
+            ref = {}
+        elsif ref.kind_of?(String)
+            return self.event_wait({ event: ref }, wait)
+        end
+
+        event = @events.find { |ev| self.cmp_hashes(ref, ev) }
         if event
             @events.delete(event)
             return event
@@ -153,9 +172,7 @@ class QMP
             if !ret['event']
                 raise ('Event expected, got ' + ret.inspect)
             end
-            if !name || ret['event'] == name
-                return ret
-            end
+            return ret if self.cmp_hashes(ref, ret)
             @events << ret
             first = false
         end
@@ -215,10 +232,10 @@ class QMP
     # Raises:
     # - A QMPError when the job has been aborted
     def process_job_event(id, event, auto_finalize=true, auto_dismiss=false)
-        return false if event['event'] != 'JOB_STATUS_CHANGE'
+        return nil if event['event'] != 'JOB_STATUS_CHANGE'
 
         data = event['data']
-        return false if data['id'] != id
+        return nil if data['id'] != id
 
         case data['status']
         when 'pending'
@@ -247,7 +264,14 @@ class QMP
     def run_job(id, auto_finalize=true, auto_dismiss=false)
         while true
             e = self.event_wait
-            break if self.process_job_event(id, e, auto_finalize, auto_dismiss)
+
+            ret = self.process_job_event(id, e, auto_finalize, auto_dismiss)
+            break if ret
+
+            @deferred_events << e if ret == nil
         end
+
+        @events += @deferred_events
+        @deferred_events = []
     end
 end
