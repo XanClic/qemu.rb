@@ -238,6 +238,9 @@ class QMP
         return nil if data['id'] != id
 
         case data['status']
+        when 'ready'
+            self.block_job_complete({ device: id })
+
         when 'pending'
             self.job_finalize({ id: id }) unless auto_finalize
 
