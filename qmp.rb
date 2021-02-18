@@ -183,6 +183,8 @@ class QMP
     def replace_underscores(val)
         if val.kind_of?(Hash)
             Hash[val.map { |k, v| [k.to_s.tr('_', '-'), self.replace_underscores(v)] }]
+        elsif val.kind_of?(Array)
+            val.map { |v| self.replace_underscores(v) }
         else
             val
         end
