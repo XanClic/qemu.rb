@@ -155,6 +155,10 @@ class VM
         Process.wait(@child) if @child
         self.cleanup()
     end
+
+    def pid
+        @child
+    end
 end
 
 
