@@ -36,7 +36,19 @@ end
 UNDERSCORE_METHODS = [
     :block_resize,
     :device_add,
+    :system_reset,
+    :migrate_cancel,
 ]
+
+def qmp_replace_underscores(val)
+    if val.kind_of?(Hash)
+        Hash[val.map { |k, v| [k.kind_of?(Symbol) ? k.to_s.tr('_', '-') : k, qmp_replace_underscores(v)] }]
+    elsif val.kind_of?(Array)
+        val.map { |v| qmp_replace_underscores(v) }
+    else
+        val
+    end
+end
 
 class QMP
     def initialize(connection)
@@ -77,14 +89,26 @@ class QMP
 
     def send(object)
         raw = object.to_json()
-        puts(raw) if @verbose
+        if @verbose
+            if @verbose.kind_of?(String)
+                puts("[#{@verbose}] #{raw}")
+            else
+                puts(raw)
+            end
+        end
         $qemu_input += raw + $/
         @con.send(raw, 0)
     end
 
     def recv()
         raw = @con.readline()
-        puts(raw) if @verbose
+        if @verbose
+            if @verbose.kind_of?(String)
+                puts("[#{@verbose}] #{raw}")
+            else
+                puts(raw)
+            end
+        end
         JSON.parse(raw)
     end
 
@@ -107,15 +131,23 @@ class QMP
         if raw.empty?
             return nil
         end
-        puts(raw) if @verbose
+        if @verbose
+            if @verbose.kind_of?(String)
+                puts("[#{@verbose}] #{raw}")
+            else
+                puts(raw)
+            end
+        end
         JSON.parse(raw)
     end
 
     def exec(cmd, args={})
-        if args == {}
-            self.send({ execute: cmd })
-        else
-            self.send({ execute: cmd, arguments: args })
+        if cmd
+            if args == {}
+                self.send({ execute: cmd })
+            else
+                self.send({ execute: cmd, arguments: args })
+            end
         end
 
         ret = {}
@@ -180,16 +212,6 @@ class QMP
         return nil
     end
 
-    def replace_underscores(val)
-        if val.kind_of?(Hash)
-            Hash[val.map { |k, v| [k.to_s.tr('_', '-'), self.replace_underscores(v)] }]
-        elsif val.kind_of?(Array)
-            val.map { |v| self.replace_underscores(v) }
-        else
-            val
-        end
-    end
-
     def method_missing(method, *args)
         if !UNDERSCORE_METHODS.include?(method)
             method = method.to_s.tr('_', '-')
@@ -200,7 +222,7 @@ class QMP
         if args.empty?
             self.exec(method)
         else
-            self.exec(method, self.replace_underscores(args[0]))
+            self.exec(method, qmp_replace_underscores(args[0]))
         end
     end
 
@@ -233,7 +255,8 @@ class QMP
     #
     # Raises:
     # - A QMPError when the job has been aborted
-    def process_job_event(id, event, auto_finalize=true, auto_dismiss=false)
+    def process_job_event(id, event, auto_finalize=true, auto_dismiss=false,
+                          expect_error: false)
         return nil if event['event'] != 'JOB_STATUS_CHANGE'
 
         data = event['data']
@@ -247,8 +270,10 @@ class QMP
             self.job_finalize({ id: id }) unless auto_finalize
 
         when 'aborting'
-            reason = self.query_jobs.find { |j| j['id'] == id }['error']
-            raise QMPError.new({ 'error': reason })
+            if !expect_error
+                reason = self.query_jobs.find { |j| j['id'] == id }['error']
+                raise QMPError.new({ 'error': reason })
+            end
 
         when 'concluded'
             self.job_dismiss({ id: id }) unless auto_dismiss
@@ -266,11 +291,12 @@ class QMP
     # @id: Block job ID
     # @auto_finalize: Whether the job was set to auto-finalize
     # @auto_dismiss: Whether the job was set to auto-dismiss
-    def run_job(id, auto_finalize=true, auto_dismiss=false)
+    def run_job(id, auto_finalize=true, auto_dismiss=false, expect_error: false)
         while true
             e = self.event_wait
 
-            ret = self.process_job_event(id, e, auto_finalize, auto_dismiss)
+            ret = self.process_job_event(id, e, auto_finalize, auto_dismiss,
+                                         expect_error: expect_error)
             break if ret
 
             @deferred_events << e if ret == nil

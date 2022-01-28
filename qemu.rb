@@ -17,6 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+require 'json'
 require 'shellwords'
 require 'socket'
 require (File.realpath(File.dirname(__FILE__)) + '/qmp.rb')
@@ -49,6 +50,14 @@ class VM
         c_stdin, @stdin = keep_stdin ? [nil, nil] : IO.pipe()
         @stdout, c_stdout = keep_stdout ? [nil, nil] : IO.pipe()
         @stderr, c_stderr = keep_stderr ? [nil, nil] : IO.pipe()
+
+        command_line.map! do |arg|
+            if arg.kind_of?(Hash)
+                JSON.unparse(qmp_replace_underscores(arg))
+            else
+                arg
+            end
+        end
 
         @child = Process.fork()
         if !@child
