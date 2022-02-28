@@ -31,17 +31,30 @@ class VM
 
     def initialize(*command_line, qtest: true, keep_stdin: true,
                    keep_stdout: false, keep_stderr: false, normal_vm: false,
-                   serial: false, print_full_cmdline: false)
+                   serial: false, print_full_cmdline: false,
+                   qsd: false, ssh: false, kvm: false)
         @this_vm = "#{Process.pid}-#{$vm_counter}"
         $vm_counter += 1
 
         if normal_vm
             qtest = false
+        else
+            kvm = false
+            ssh = false
+        end
+
+        if qsd
+            kvm = false
+            normal_vm = false
+            qtest = false
+            serial = false
+            ssh = false
         end
 
         @qmp_socket_fname = '/tmp/qemu.rb-qmp-' + @this_vm
         @qtest_socket_fname = '/tmp/qemu.rb-qtest-' + @this_vm if qtest
         @serial_socket_fname = '/tmp/qemu.rb-serial-' + @this_vm if serial
+        @ssh_known_hosts = '/tmp/qemu.rb-known-hosts-' + @this_vm if ssh
 
         @qmp_socket = UNIXServer.new(@qmp_socket_fname)
         @qtest_socket = UNIXServer.new(@qtest_socket_fname) if qtest
@@ -61,15 +74,24 @@ class VM
 
         @child = Process.fork()
         if !@child
-            add_args = ['-qmp', 'unix:' + @qmp_socket_fname]
-            add_args += ['-M', 'q35,accel=qtest:tcg',
-                         '-qtest', 'unix:' + @qtest_socket_fname] if qtest
-            add_args += ['-M', 'q35,accel=tcg'] unless qtest || normal_vm
-            add_args += ['-display', 'none'] unless normal_vm
+            accel_list = ['tcg']
+            if qtest
+                accel_list = ['qtest'] + accel_list
+            elsif kvm
+                accel_list = ['kvm'] + accel_list
+            end
+
+            add_args = ['--chardev', "socket,id=mon0,path=#{@qmp_socket_fname}",
+                        '--mon', 'mon0,mode=control',
+                        '-M', "q35,accel=#{accel_list * ':'}"]
+            add_args += ['-qtest', 'unix:' + @qtest_socket_fname] if qtest
+            add_args += ['-display', 'none'] if !normal_vm && !qsd
             add_args += ['-serial', 'unix:' + @serial_socket_fname] if serial
+            add_args += ['--netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:2345-:22',
+                         '--device', 'e1000,netdev=net'] if ssh
 
             # FIXME (something with the e1000e BIOS file)
-            add_args += ['-net', 'none'] unless normal_vm
+            add_args += ['-net', 'none'] if !normal_vm && !qsd
 
             if print_full_cmdline
                 puts('$ ' + (command_line + add_args).map { |arg| arg.shellescape } * ' ')
@@ -140,6 +162,7 @@ class VM
             File.delete(@qmp_socket_fname)
             File.delete(@qtest_socket_fname) if @qtest_socket_fname
             File.delete(@serial_socket_fname) if @serial_socket_fname
+            File.delete(@ssh_known_hosts) if @ssh_known_hosts
         rescue
         end
     end
@@ -158,6 +181,39 @@ class VM
 
     def pid
         @child
+    end
+
+    def wait_ssh(login, pass)
+        return false if !@ssh_known_hosts
+
+        while !system("ssh-keyscan -T 1 -p 2345 127.0.0.1 2>/dev/null >#{@ssh_known_hosts.shellescape}")
+            sleep(1)
+        end
+
+        @ssh_login = login
+        @ssh_pass = pass
+
+        return true
+    end
+
+    def ssh(cmd, background: false)
+        return nil if !@ssh_known_hosts || !File.file?(@ssh_known_hosts)
+
+        args = ['sshpass', '-p', @ssh_pass,
+                'ssh', '-p', '2345',
+                       '-o', "UserKnownHostsFile=#{@ssh_known_hosts}",
+                       "#{@ssh_login}@127.0.0.1",
+                cmd]
+
+        if background
+            if !fork
+                Process.exec(*args)
+                exit 1
+            end
+            true
+        else
+            system(args.map { |a| a.shellescape } * ' ')
+        end
     end
 end
 
