@@ -1,7 +1,7 @@
 #!/usr/bin/ruby
 
 # qmp.rb: QMP communication over a socket
-# Copyright (C) 2017 Max Reitz
+# Copyright (C) 2017 Hanna Reitz
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
