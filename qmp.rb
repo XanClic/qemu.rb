@@ -36,6 +36,7 @@ end
 UNDERSCORE_METHODS = [
     :block_resize,
     :device_add,
+    :device_del,
     :system_reset,
     :migrate_cancel,
 ]
@@ -210,6 +211,10 @@ class QMP
         end
 
         return nil
+    end
+
+    def clear_events()
+        @events = []
     end
 
     def method_missing(method, *args)

@@ -32,7 +32,8 @@ class VM
     def initialize(*command_line, qtest: true, keep_stdin: true,
                    keep_stdout: false, keep_stderr: false, normal_vm: false,
                    serial: false, print_full_cmdline: false,
-                   qsd: false, ssh: false, kvm: false)
+                   qsd: false, qsd_rs: false, ssh: false, kvm: false,
+                   pass_fds: {})
         @this_vm = "#{Process.pid}-#{$vm_counter}"
         $vm_counter += 1
 
@@ -43,7 +44,7 @@ class VM
             ssh = false
         end
 
-        if qsd
+        if qsd || qsd_rs
             kvm = false
             normal_vm = false
             qtest = false
@@ -72,6 +73,12 @@ class VM
             end
         end
 
+        if ssh.kind_of?(Integer)
+            @ssh_port = ssh
+        else
+            @ssh_port = 2345
+        end
+
         @child = Process.fork()
         if !@child
             accel_list = ['tcg']
@@ -81,17 +88,43 @@ class VM
                 accel_list = ['kvm'] + accel_list
             end
 
-            add_args = ['--chardev', "socket,id=mon0,path=#{@qmp_socket_fname}",
-                        '--mon', 'mon0,mode=control',
-                        '-M', "q35,accel=#{accel_list * ':'}"]
+            if qsd_rs
+                chardev = {
+                    id: 'char0',
+                    backend: {
+                        type: 'socket',
+                        data: {
+                            addr: {
+                                type: 'unix',
+                                path: @qmp_socket_fname,
+                            },
+                        },
+                    },
+                }
+
+                monitor = {
+                    id: 'mon0',
+                    chardev: chardev[:id],
+                }
+
+                add_args = ['--chardev', JSON.unparse(chardev),
+                            '--monitor', JSON.unparse(monitor)]
+            elsif qsd
+                add_args = ['--chardev', "socket,id=mon0,path=#{@qmp_socket_fname}",
+                            '--monitor', 'mon0']
+            else
+                add_args = ['--chardev', "socket,id=mon0,path=#{@qmp_socket_fname}",
+                            '--mon', 'mon0,mode=control',
+                            '-M', "q35,accel=#{accel_list * ':'}"]
+            end
             add_args += ['-qtest', 'unix:' + @qtest_socket_fname] if qtest
-            add_args += ['-display', 'none'] if !normal_vm && !qsd
+            add_args += ['-display', 'none'] if !normal_vm && !qsd && !qsd_rs
             add_args += ['-serial', 'unix:' + @serial_socket_fname] if serial
-            add_args += ['--netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:2345-:22',
+            add_args += ['--netdev', "user,id=net,hostfwd=tcp:127.0.0.1:#{@ssh_port}-:22",
                          '--device', 'e1000,netdev=net'] if ssh
 
             # FIXME (something with the e1000e BIOS file)
-            add_args += ['-net', 'none'] if !normal_vm && !qsd
+            add_args += ['-net', 'none'] if !normal_vm && !qsd && !qsd_rs
 
             if print_full_cmdline
                 puts('$ ' + (command_line + add_args).map { |arg| arg.shellescape } * ' ')
@@ -100,6 +133,17 @@ class VM
             STDIN.reopen(c_stdin) unless keep_stdin
             STDOUT.reopen(c_stdout) unless keep_stdout
             STDERR.reopen(c_stderr) unless keep_stderr
+
+            command_line.map! do |arg|
+                if arg.include?('{FDSET:')
+                    fname = arg.sub(/.*\{FDSET:([^}]*)\}.*/, '\1')
+                    f = File.open(fname, 'r+')
+                    f.close_on_exec = false
+                    arg.sub(/(.*)\{FDSET:[^}]*\}(.*)/, "\\1#{f.fileno}\\2")
+                else
+                    arg
+                end
+            end
 
             Process.exec(*command_line, *add_args)
             exit 1
@@ -186,7 +230,7 @@ class VM
     def wait_ssh(login, pass)
         return false if !@ssh_known_hosts
 
-        while !system("ssh-keyscan -T 1 -p 2345 127.0.0.1 2>/dev/null >#{@ssh_known_hosts.shellescape}")
+        while !system("ssh-keyscan -T 1 -p #{@ssh_port} 127.0.0.1 2>/dev/null >#{@ssh_known_hosts.shellescape}")
             sleep(1)
         end
 
@@ -196,11 +240,11 @@ class VM
         return true
     end
 
-    def ssh(cmd, background: false)
+    def ssh(cmd, background: false, capture: false)
         return nil if !@ssh_known_hosts || !File.file?(@ssh_known_hosts)
 
         args = ['sshpass', '-p', @ssh_pass,
-                'ssh', '-p', '2345',
+                'ssh', '-p', @ssh_port.to_s,
                        '-o', "UserKnownHostsFile=#{@ssh_known_hosts}",
                        "#{@ssh_login}@127.0.0.1",
                 cmd]
@@ -211,6 +255,8 @@ class VM
                 exit 1
             end
             true
+        elsif capture
+            `#{args.map { |a| a.shellescape } * ' '}`
         else
             system(args.map { |a| a.shellescape } * ' ')
         end
