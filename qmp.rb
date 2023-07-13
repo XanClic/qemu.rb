@@ -260,7 +260,8 @@ class QMP
     #
     # Raises:
     # - A QMPError when the job has been aborted
-    def process_job_event(id, event, auto_finalize=true, auto_dismiss=false,
+    def process_job_event(id, event, job_state,
+                          auto_finalize=true, auto_dismiss=false,
                           expect_error: false)
         return nil if event['event'] != 'JOB_STATUS_CHANGE'
 
@@ -269,7 +270,10 @@ class QMP
 
         case data['status']
         when 'ready'
-            self.block_job_complete({ device: id })
+            if !job_state[:send_complete]
+                self.block_job_complete({ device: id })
+                job_state[:send_complete] = true
+            end
 
         when 'pending'
             self.job_finalize({ id: id }) unless auto_finalize
@@ -297,10 +301,13 @@ class QMP
     # @auto_finalize: Whether the job was set to auto-finalize
     # @auto_dismiss: Whether the job was set to auto-dismiss
     def run_job(id, auto_finalize=true, auto_dismiss=false, expect_error: false)
+        job_state = {}
+
         while true
             e = self.event_wait
 
-            ret = self.process_job_event(id, e, auto_finalize, auto_dismiss,
+            ret = self.process_job_event(id, e, job_state,
+                                         auto_finalize, auto_dismiss,
                                          expect_error: expect_error)
             break if ret
 

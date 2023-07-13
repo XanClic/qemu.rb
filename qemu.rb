@@ -32,8 +32,8 @@ class VM
     def initialize(*command_line, qtest: true, keep_stdin: true,
                    keep_stdout: false, keep_stderr: false, normal_vm: false,
                    serial: false, print_full_cmdline: false,
-                   qsd: false, qsd_rs: false, ssh: false, kvm: false,
-                   pass_fds: {})
+                   qsd: false, rsd: false, ssh: false, kvm: false,
+                   pass_fds: {}, gdb: false)
         @this_vm = "#{Process.pid}-#{$vm_counter}"
         $vm_counter += 1
 
@@ -44,12 +44,18 @@ class VM
             ssh = false
         end
 
-        if qsd || qsd_rs
+        if qsd || rsd
             kvm = false
             normal_vm = false
             qtest = false
             serial = false
             ssh = false
+        end
+
+        if gdb
+            keep_stdin = true
+            keep_stdout = true
+            keep_stderr = true
         end
 
         @qmp_socket_fname = '/tmp/qemu.rb-qmp-' + @this_vm
@@ -88,7 +94,7 @@ class VM
                 accel_list = ['kvm'] + accel_list
             end
 
-            if qsd_rs
+            if rsd
                 chardev = {
                     id: 'char0',
                     backend: {
@@ -118,16 +124,16 @@ class VM
                             '-M', "q35,accel=#{accel_list * ':'}"]
             end
             add_args += ['-qtest', 'unix:' + @qtest_socket_fname] if qtest
-            add_args += ['-display', 'none'] if !normal_vm && !qsd && !qsd_rs
+            add_args += ['-display', 'none'] if !normal_vm && !qsd && !rsd
             add_args += ['-serial', 'unix:' + @serial_socket_fname] if serial
             add_args += ['--netdev', "user,id=net,hostfwd=tcp:127.0.0.1:#{@ssh_port}-:22",
                          '--device', 'e1000,netdev=net'] if ssh
 
             # FIXME (something with the e1000e BIOS file)
-            add_args += ['-net', 'none'] if !normal_vm && !qsd && !qsd_rs
+            add_args += ['-net', 'none'] if !normal_vm && !qsd && !rsd
 
             if print_full_cmdline
-                puts('$ ' + (command_line + add_args).map { |arg| arg.shellescape } * ' ')
+                puts('$ ' + ((gdb ? ['gdb'] : []) + command_line + add_args).map { |arg| arg.shellescape } * ' ')
             end
 
             STDIN.reopen(c_stdin) unless keep_stdin
@@ -145,7 +151,11 @@ class VM
                 end
             end
 
-            Process.exec(*command_line, *add_args)
+            if gdb
+                Process.exec('gdb', '--eval-command', (['run'] + command_line[1..] + add_args).map { |arg| arg.shellescape } * ' ', command_line[0])
+            else
+                Process.exec(*command_line, *add_args)
+            end
             exit 1
         end
 
