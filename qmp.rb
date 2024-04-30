@@ -96,6 +96,7 @@ class QMP
             else
                 puts(raw)
             end
+            $stdout.flush
         end
         $qemu_input += raw + $/
         @con.send(raw, 0)
@@ -109,6 +110,7 @@ class QMP
             else
                 puts(raw)
             end
+            $stdout.flush
         end
         JSON.parse(raw)
     end
@@ -138,6 +140,7 @@ class QMP
             else
                 puts(raw)
             end
+            $stdout.flush
         end
         JSON.parse(raw)
     end

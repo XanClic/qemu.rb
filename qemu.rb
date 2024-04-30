@@ -33,7 +33,7 @@ class VM
                    keep_stdout: false, keep_stderr: false, normal_vm: false,
                    serial: false, print_full_cmdline: false,
                    qsd: false, rsd: false, ssh: false, kvm: false,
-                   pass_fds: {}, gdb: false)
+                   pass_fds: {}, gdb: false, tcp_socks: false, machine: 'q35')
         @this_vm = "#{Process.pid}-#{$vm_counter}"
         $vm_counter += 1
 
@@ -58,14 +58,25 @@ class VM
             keep_stderr = true
         end
 
-        @qmp_socket_fname = '/tmp/qemu.rb-qmp-' + @this_vm
-        @qtest_socket_fname = '/tmp/qemu.rb-qtest-' + @this_vm if qtest
-        @serial_socket_fname = '/tmp/qemu.rb-serial-' + @this_vm if serial
         @ssh_known_hosts = '/tmp/qemu.rb-known-hosts-' + @this_vm if ssh
 
-        @qmp_socket = UNIXServer.new(@qmp_socket_fname)
-        @qtest_socket = UNIXServer.new(@qtest_socket_fname) if qtest
-        @serial_socket = UNIXServer.new(@serial_socket_fname) if serial
+        if tcp_socks
+            @qmp_socket_port = 50413 + 0
+            @qtest_socket_port = 50413 + 1
+            @serial_socket_port = 50413 + 2
+
+            @qmp_socket = TCPServer.new(@qmp_socket_port)
+            @qtest_socket = TCPServer.new(@qtest_socket_port) if qtest
+            @serial_socket = TCPServer.new(@serial_socket_port) if serial
+        else
+            @qmp_socket_fname = '/tmp/qemu.rb-qmp-' + @this_vm
+            @qtest_socket_fname = '/tmp/qemu.rb-qtest-' + @this_vm if qtest
+            @serial_socket_fname = '/tmp/qemu.rb-serial-' + @this_vm if serial
+
+            @qmp_socket = UNIXServer.new(@qmp_socket_fname)
+            @qtest_socket = UNIXServer.new(@qtest_socket_fname) if qtest
+            @serial_socket = UNIXServer.new(@serial_socket_fname) if serial
+        end
 
         c_stdin, @stdin = keep_stdin ? [nil, nil] : IO.pipe()
         @stdout, c_stdout = keep_stdout ? [nil, nil] : IO.pipe()
@@ -99,14 +110,24 @@ class VM
                     id: 'char0',
                     backend: {
                         type: 'socket',
-                        data: {
-                            addr: {
-                                type: 'unix',
-                                path: @qmp_socket_fname,
-                            },
-                        },
-                    },
+                    }
                 }
+                if tcp_socks
+                    chardev[:backend][:data] = {
+                        addr: {
+                            type: 'inet',
+                            host: '127.0.0.1',
+                            port: @qmp_socket_port.to_s,
+                        },
+                    }
+                else
+                    chardev[:backend][:data] = {
+                        addr: {
+                            type: 'unix',
+                            path: @qmp_socket_fname,
+                        },
+                    }
+                end
 
                 monitor = {
                     id: 'mon0',
@@ -116,16 +137,20 @@ class VM
                 add_args = ['--chardev', JSON.unparse(chardev),
                             '--monitor', JSON.unparse(monitor)]
             elsif qsd
-                add_args = ['--chardev', "socket,id=mon0,path=#{@qmp_socket_fname}",
+                mon_arg = tcp_socks ? "host=127.0.0.1,port=#{@qmp_socket_port}" : "path=#{@qmp_socket_fname}"
+                add_args = ['--chardev', "socket,id=mon0,#{mon_arg}",
                             '--monitor', 'mon0']
             else
-                add_args = ['--chardev', "socket,id=mon0,path=#{@qmp_socket_fname}",
-                            '--mon', 'mon0,mode=control',
-                            '-M', "q35,accel=#{accel_list * ':'}"]
+                mon_arg = tcp_socks ? "host=127.0.0.1,port=#{@qmp_socket_port}" : "path=#{@qmp_socket_fname}"
+                add_args = ['--chardev', "socket,id=mon0,#{mon_arg}",
+                            '--mon', 'mon0,mode=control']
+                if !(command_line & ['-M', '--machine']).empty?
+                    add_args += ['--machine', "#{machine},accel=#{accel_list * ':'}"]
+                end
             end
-            add_args += ['-qtest', 'unix:' + @qtest_socket_fname] if qtest
+            add_args += ['-qtest', tcp_socks ? "tcp:127.0.0.1:#{@qtest_socket_port}" : "unix:#{@qtest_socket_fname}"] if qtest
             add_args += ['-display', 'none'] if !normal_vm && !qsd && !rsd
-            add_args += ['-serial', 'unix:' + @serial_socket_fname] if serial
+            add_args += ['-serial', tcp_socks ? "tcp:127.0.0.1:#{@serial_socket_port}" : "unix:#{@serial_socket_fname}"] if serial
             add_args += ['--netdev', "user,id=net,hostfwd=tcp:127.0.0.1:#{@ssh_port}-:22",
                          '--device', 'e1000,netdev=net'] if ssh
 
